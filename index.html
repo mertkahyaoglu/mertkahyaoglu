@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar System Explorer</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.60.0/dist/phaser.min.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #050510;
+            color: #ffffff;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            overflow: hidden;
+        }
+        #game-container {
+            box-shadow: 0 0 30px rgba(0, 150, 255, 0.2);
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        h1 { margin-bottom: 10px; font-size: 24px; letter-spacing: 2px; }
+        p { margin-top: 15px; color: #8892b0; font-size: 14px; }
+    </style>
+</head>
+<body>
+
+    <div id="game-container"></div>
+    <p>Use <b>Left/Right</b> to steer. <b>Space</b> to restart if you crash.</p>
+
+    <script>
+        // --- EDIT EVERYTHING HERE ---
+        const GAME_CONFIG = {
+            width: 500,
+            height: 700,
+            rocketHorizontalSpeed: 380, // How fast the rocket steers
+            starCount: 150,             // Number of background stars
+            baseStarSpeed: 4,           // Speed of stars during flight
+            transitionDelay: 3000,      // Time (ms) to wait on a planet before next launch
+            
+            // Level definitions: Name, Color, Size, Speed, and how far away they start
+            levels: [
+                { name: "Moon",    color: 0xcccccc, radius: 50,  speed: 150, distance: 1000 },
+                { name: "Mars",    color: 0xcc4422, radius: 60,  speed: 200, distance: 2000 },
+                { name: "Jupiter", color: 0xd2b48c, radius: 110, speed: 250, distance: 4500 },
+                { name: "Saturn",  color: 0xf4a460, radius: 90,  speed: 300, distance: 6500, ring: true },
+                { name: "Uranus",  color: 0xadd8e6, radius: 70,  speed: 350, distance: 7500 },
+                { name: "Neptune", color: 0x4682b4, radius: 70,  speed: 400, distance: 10000 }
+            ]
+        };
+
+        class MainScene extends Phaser.Scene {
+            constructor() {
+                super({ key: 'MainScene' });
+            }
+
+            create() {
+                this.currentLevel = 0;
+                this.gameState = 'playing';
+
+                this.generateTextures();
+
+                // Starfield
+                this.stars = this.add.group();
+                for (let i = 0; i < GAME_CONFIG.starCount; i++) {
+                    let star = this.add.circle(
+                        Phaser.Math.Between(0, GAME_CONFIG.width), 
+                        Phaser.Math.Between(0, GAME_CONFIG.height), 
+                        Phaser.Math.FloatBetween(0.5, 2), 
+                        0xffffff
+                    );
+                    star.alpha = Phaser.Math.FloatBetween(0.3, 1);
+                    this.stars.add(star);
+                }
+
+                this.rocket = this.physics.add.sprite(GAME_CONFIG.width / 2, 600, 'rocket');
+                this.rocket.setCollideWorldBounds(true);
+
+                // Particles
+                this.emitter = this.add.particles(0, 0, 'flare', {
+                    speedY: { min: 100, max: 250 },
+                    speedX: { min: -15, max: 15 },
+                    scale: { start: 1.5, end: 0 },
+                    lifespan: 400,
+                    blendMode: 'ADD'
+                });
+                this.emitter.startFollow(this.rocket, 0, 30);
+
+                // UI
+                this.levelText = this.add.text(15, 15, '', { fontSize: '18px', fill: '#00ffcc', fontStyle: 'bold' });
+                this.distText = this.add.text(15, 40, '', { fontSize: '16px', fill: '#ffffff' });
+                this.uiText = this.add.text(GAME_CONFIG.width / 2, GAME_CONFIG.height / 2, '', { 
+                    fontSize: '24px', fill: '#ffffff', align: 'center', fontStyle: 'bold', 
+                    backgroundColor: 'rgba(0,0,0,0.8)', padding: { x: 20, y: 20 }
+                }).setOrigin(0.5).setDepth(100).setVisible(false);
+
+                this.cursors = this.input.keyboard.createCursorKeys();
+
+                this.startNextLevel();
+            }
+
+            generateTextures() {
+                let rg = this.add.graphics();
+                rg.fillStyle(0xeeeeee); rg.fillRect(10, 20, 20, 40); 
+                rg.fillStyle(0xff3333); rg.fillTriangle(10, 20, 30, 20, 20, 0); 
+                rg.fillStyle(0xff3333); rg.fillTriangle(10, 40, 0, 60, 10, 60); 
+                rg.fillStyle(0xff3333); rg.fillTriangle(30, 40, 40, 60, 30, 60); 
+                rg.fillStyle(0x87ceeb); rg.fillCircle(20, 35, 5); 
+                rg.generateTexture('rocket', 40, 60);
+                rg.destroy();
+
+                let pg = this.add.graphics();
+                pg.fillStyle(0xffaa00); pg.fillCircle(4, 4, 4);
+                pg.generateTexture('flare', 8, 8);
+                pg.destroy();
+
+                GAME_CONFIG.levels.forEach(lvl => {
+                    let g = this.add.graphics();
+                    let cx = lvl.radius * 1.5; let cy = lvl.radius;
+                    g.fillStyle(lvl.color); g.fillCircle(cx, cy, lvl.radius);
+                    if(lvl.ring) {
+                        g.lineStyle(6, 0xaaaaaa, 0.6);
+                        g.strokeEllipse(cx, cy, lvl.radius * 2.6, lvl.radius * 0.7);
+                    }
+                    g.generateTexture('tex_' + lvl.name, lvl.radius * 3, lvl.radius * 2);
+                    g.destroy();
+                });
+            }
+
+            startNextLevel() {
+                if (this.currentLevel >= GAME_CONFIG.levels.length) {
+                    this.gameState = 'gameover';
+                    this.uiText.setText("MISSION COMPLETE!\nTHE ENTIRE SOLAR SYSTEM\nHAS BEEN VISITED\n\nPRESS SPACE TO RESTART").setVisible(true);
+                    return;
+                }
+
+                let lvl = GAME_CONFIG.levels[this.currentLevel];
+                this.gameState = 'playing';
+                this.uiText.setVisible(false);
+                this.levelText.setText("DESTINATION: " + lvl.name.toUpperCase());
+                this.emitter.start();
+
+                if (this.target) this.target.destroy();
+
+                let startX = Phaser.Math.Between(lvl.radius, GAME_CONFIG.width - lvl.radius);
+                this.target = this.physics.add.sprite(startX, -lvl.distance, 'tex_' + lvl.name);
+                
+                let cx = lvl.radius * 1.5; let cy = lvl.radius;
+                this.target.body.setCircle(lvl.radius, cx - lvl.radius, cy - lvl.radius);
+                this.target.setVelocityY(lvl.speed);
+
+                this.physics.add.overlap(this.rocket, this.target, this.handleLanding, null, this);
+            }
+
+            handleLanding() {
+                if (this.gameState !== 'playing') return;
+                this.gameState = 'transitioning';
+                this.rocket.setVelocityX(0);
+                this.target.setVelocityY(0); 
+                this.emitter.stop(); 
+                
+                let lvl = GAME_CONFIG.levels[this.currentLevel];
+                this.uiText.setText(`LANDED ON ${lvl.name.toUpperCase()}!\nPREPARING NEXT LAUNCH...`).setVisible(true);
+
+                this.currentLevel++;
+                this.time.delayedCall(GAME_CONFIG.transitionDelay, () => this.startNextLevel());
+            }
+
+            update() {
+                if (this.gameState === 'gameover') {
+                    if (this.cursors.space.isDown) this.scene.restart();
+                    return;
+                }
+
+                let starSpeed = this.gameState === 'playing' ? GAME_CONFIG.baseStarSpeed : 0.5;
+                this.stars.children.iterate((star) => {
+                    star.y += starSpeed * (star.alpha + 0.3); 
+                    if (star.y > GAME_CONFIG.height) { 
+                        star.y = 0; 
+                        star.x = Phaser.Math.Between(0, GAME_CONFIG.width); 
+                    }
+                });
+
+                if (this.gameState === 'playing') {
+                    let distRemaining = Math.max(0, Math.floor((this.rocket.y - this.target.y) / 10));
+                    this.distText.setText(`DISTANCE: ${distRemaining}km`);
+
+                    if (this.cursors.left.isDown) this.rocket.setVelocityX(-GAME_CONFIG.rocketHorizontalSpeed);
+                    else if (this.cursors.right.isDown) this.rocket.setVelocityX(GAME_CONFIG.rocketHorizontalSpeed);
+                    else this.rocket.setVelocityX(0);
+
+                    if (this.target && this.target.y > GAME_CONFIG.height + 50) {
+                        this.gameState = 'gameover';
+                        this.emitter.stop();
+                        this.uiText.setText(`MISSED ${GAME_CONFIG.levels[this.currentLevel].name.toUpperCase()}!\nLOST IN SPACE\n\nPRESS SPACE TO RETRY`).setVisible(true);
+                    }
+                }
+            }
+        }
+
+        const config = {
+            type: Phaser.AUTO,
+            width: GAME_CONFIG.width, height: GAME_CONFIG.height,
+            parent: 'game-container',
+            physics: { default: 'arcade', arcade: { gravity: { y: 0 } } },
+            scene: [MainScene]
+        };
+
+        new Phaser.Game(config);
+    </script>
+</body>
+</html>
